@@ -536,6 +536,26 @@ const sdk = new SDK({ debugLogger: console });
 ```
 <!-- End Debugging [debug] -->
 
+
+## Browser-Only Usage
+
+> **SDK Type**: HTTP Client (Browser)
+
+This SDK is designed **exclusively for browser environments**:
+
+✅ **Use for**:
+- Vanilla JavaScript/TypeScript web apps
+- Single-page applications (SPAs)
+- Client-side authentication and API calls
+
+❌ **Not for**:
+- Node.js backends (use `@aerostack/node` instead)
+- Server-side rendering (use `@aerostack/node` for SSR data fetching)
+- Cloudflare Workers (use `@aerostack/sdk` instead)
+
+**For React apps**, use `@aerostack/react` which provides hooks and context.  
+**For server-side code**, use `@aerostack/node`.
+
 # Development
 
 ## Maturity
