@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aerostack Web SDK - Vanilla JS Example</title>
+    <!-- In a real app, you might use a bundler, but for this example we assume a UMD build or similar if available, 
+         or just show usage code as if imported -->
+</head>
+<body>
+    <h1>Aerostack Auth Demo</h1>
+    
+    <div id="auth-form">
+        <h2>Login</h2>
+        <input type="email" id="email" placeholder="Email" />
+        <input type="password" id="password" placeholder="Password" />
+        <button onclick="login()">Login</button>
+    </div>
+
+    <div id="profile" style="display:none;">
+        <h2>Welcome, <span id="user-name"></span>!</h2>
+        <button onclick="logout()">Logout</button>
+    </div>
+
+    <script type="module">
+        import { Aerostack } from 'https://cdn.jsdelivr.net/npm/@aerostack/web@latest/+esm';
+
+        // Initialize SDK
+        const sdk = new Aerostack({
+             // No API key needed for client-side auth
+             // baseURL: 'https://api.aerostack.ai/v1' // optional override
+        });
+
+        window.login = async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const result = await sdk.authentication.authSignin({
+                    email,
+                    password
+                });
+
+                if (result.ok) {
+                    localStorage.setItem('token', result.value.token);
+                    showProfile(result.value.user);
+                } else {
+                    alert('Login failed: ' + JSON.stringify(result.error));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        };
+
+        window.logout = () => {
+            localStorage.removeItem('token');
+            document.getElementById('auth-form').style.display = 'block';
+            document.getElementById('profile').style.display = 'none';
+        };
+
+        function showProfile(user) {
+            document.getElementById('user-name').innerText = user?.name || user?.email;
+            document.getElementById('auth-form').style.display = 'none';
+            document.getElementById('profile').style.display = 'block';
+        }
+
+        // Check if already logged in
+        // (In a real app, you'd verify the token with sdk.auth.me() or similar)
+        const token = localStorage.getItem('token');
+        if (token) {
+            // Mock restoring session for demo
+            showProfile({ email: 'restored-user@example.com' });
+        }
+    </script>
+</body>
+</html>

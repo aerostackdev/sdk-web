@@ -16,6 +16,15 @@ This directory contains example scripts demonstrating how to use the @aerostack/
 
 2. Edit `.env` and add your actual credentials
 
+## Available Examples
+
+| Example | Description |
+|---------|-------------|
+| [**Vanilla JS Auth**](./vanilla-js-auth.html) | Simple HTML/JS page with login flow. |
+| [**SPA Routing**](./spa-routing.html) | Client-side routing with protected pages. |
+| [**AI Chat**](./aiAIChat.example.ts) | Generated AI chat example. |
+| [**Database Query**](./databaseDbQuery.example.ts) | Generated DB query example. |
+
 ## Running the Examples
 
 To run an example file from the examples directory:

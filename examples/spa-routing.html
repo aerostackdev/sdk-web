@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Aerostack - SPA Routing Example</title>
+    <style>
+        .page {
+            display: none;
+        }
+
+        .active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <nav>
+        <a href="#/" onclick="navigate('/')">Home</a>
+        <a href="#/dashboard" onclick="navigate('/dashboard')">Dashboard (Protected)</a>
+        <a href="#/login" onclick="navigate('/login')">Login</a>
+    </nav>
+
+    <div id="home" class="page active">
+        <h1>Home</h1>
+        <p>Welcome to the public home page.</p>
+    </div>
+
+    <div id="login" class="page">
+        <h1>Login</h1>
+        <button onclick="doLogin()">Simulate Login</button>
+    </div>
+
+    <div id="dashboard" class="page">
+        <h1>Dashboard</h1>
+        <p>This is a protected route. You can only see this if logged in.</p>
+    </div>
+
+    <script type="module">
+        import { Aerostack } from 'https://cdn.jsdelivr.net/npm/@aerostack/web@latest/+esm';
+
+        const sdk = new Aerostack();
+        let isAuthenticated = false;
+
+        window.navigate = (path) => {
+            // Basic router
+            if (path === '/dashboard' && !isAuthenticated) {
+                alert("Please login first!");
+                navigate('/login');
+                return;
+            }
+
+            document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+
+            if (path === '/' || path === '') document.getElementById('home').classList.add('active');
+            else if (path === '/login') document.getElementById('login').classList.add('active');
+            else if (path === '/dashboard') document.getElementById('dashboard').classList.add('active');
+        };
+
+        window.doLogin = async () => {
+            // In real app: call sdk.authentication.login()
+            console.log("Logging in...");
+            isAuthenticated = true;
+            alert("Logged in!");
+            navigate('/dashboard');
+        };
+
+        // Handle initial load
+        window.addEventListener('load', () => {
+            const hash = window.location.hash.slice(1) || '/';
+            navigate(hash);
+        });
+    </script>
+</body>
+
+</html>
