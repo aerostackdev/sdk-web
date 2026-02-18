@@ -1,6 +1,6 @@
 {
   "name": "@aerostack/sdk-web",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "author": "Aerostack",
   "type": "module",
   "repository": {
@@ -43,7 +43,8 @@
     "typescript-eslint": "^8.26.0"
   },
   "dependencies": {
-    "zod": "^3.25.0 || ^4.0.0"
+    "zod": "^3.25.0 || ^4.0.0",
+    "@aerostack/core": "file:../../../packages/core"
   },
   "exports": {
     ".": {

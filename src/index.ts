@@ -8,3 +8,5 @@ export { HTTPClient } from "./lib/http.js";
 export type { Fetcher, HTTPClientOptions } from "./lib/http.js";
 export * from "./sdk/sdk.js";
 export * from "./sdk/realtime.js";
+export { AerocallClient } from "@aerostack/core";
+export type { AerocallConfig } from "@aerostack/core";
