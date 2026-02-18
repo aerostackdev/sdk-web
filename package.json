@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "zod": "^3.25.0 || ^4.0.0",
-    "@aerostack/core": "file:../../../packages/core"
+    "@aerostack/core": "file:../core"
   },
   "exports": {
     ".": {
