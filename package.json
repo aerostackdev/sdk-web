@@ -1,6 +1,6 @@
 {
   "name": "@aerostack/sdk-web",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "author": "Aerostack",
   "type": "module",
   "tshy": {
@@ -24,15 +24,14 @@
     "build": "tshy",
     "prepublishOnly": "npm run build"
   },
+  "peerDependencies": {},
   "devDependencies": {
     "@eslint/js": "^9.26.0",
-    "@types/ws": "^8.18.1",
     "eslint": "^9.26.0",
     "globals": "^15.14.0",
     "tshy": "^2.0.0",
     "typescript": "~5.8.3",
-    "typescript-eslint": "^8.26.0",
-    "ws": "^8.19.0"
+    "typescript-eslint": "^8.26.0"
   },
   "dependencies": {
     "@aerostack/core": "file:../core",
