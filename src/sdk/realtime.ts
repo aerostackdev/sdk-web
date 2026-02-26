@@ -158,8 +158,7 @@ export class RealtimeClient {
             // Protocol format: "aerostack-key.<base64-encoded-key>"
             const protocols: string[] = [];
             if (this.apiKey) {
-                const encodedKey = btoa(this.apiKey);
-                protocols.push(`aerostack-key.${encodedKey}`);
+                protocols.push(`aerostack-key.${this.apiKey}`);
             }
 
             this.ws = protocols.length > 0
