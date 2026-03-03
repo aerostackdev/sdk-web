@@ -155,15 +155,11 @@ export class RealtimeClient {
         this._setStatus('connecting');
         return new Promise((resolve, reject) => {
             const url = new URL(this.baseUrl);
-            // Original: if (this.token) url.searchParams.set('token', this.token);
-            // The instruction implies apiKey and token should also be set as query params if not in protocol.
-            // However, the original code explicitly states "NOT as a URL query param" for apiKey.
-            // I will follow the instruction to add projectId to URL params, and keep token as URL param,
-            // but keep apiKey only in protocol as per original comment.
             if (this.token) url.searchParams.set('token', this.token);
             if (this.projectId) url.searchParams.set('projectId', this.projectId);
 
-            // SECURITY: Pass API key via Sec-WebSocket-Protocol header, NOT as a URL query param.
+            // SECURITY: Pass API key via Sec-WebSocket-Protocol header only — never as URL query param
+            // (URL params appear in CDN logs, browser history, and Referer headers).
             const protocols: string[] = [];
             if (this.apiKey) {
                 protocols.push(`aerostack-key.${this.apiKey}`);
@@ -225,10 +221,18 @@ export class RealtimeClient {
     }
 
     channel<T = any>(topic: string, options: RealtimeSubscriptionOptions = {}): RealtimeSubscription<T> {
-        let sub = this.subscriptions.get(topic);
+        let fullTopic: string;
+        if (!topic.includes('/')) {
+            fullTopic = `table/${topic}/${this.projectId}`;
+        } else if (this.projectId && topic.endsWith(`/${this.projectId}`)) {
+            fullTopic = topic; // already fully qualified
+        } else {
+            fullTopic = `${topic}/${this.projectId}`; // e.g. 'table/orders' → 'table/orders/<projectId>'
+        }
+        let sub = this.subscriptions.get(fullTopic);
         if (!sub) {
-            sub = new RealtimeSubscription<T>(this, topic, options);
-            this.subscriptions.set(topic, sub);
+            sub = new RealtimeSubscription<T>(this, fullTopic, options);
+            this.subscriptions.set(fullTopic, sub);
         }
         return sub as RealtimeSubscription<T>;
     }
