@@ -115,7 +115,17 @@ export class RealtimeClient {
         this.baseUrl = `${wsBase}/api/realtime`;
         this.token = options.token;
         this.apiKey = options.apiKey;
-        this.projectId = options.projectId; // Initialize projectId
+        // Attempt to extract projectId from API key if not explicitly passed
+        if (options.projectId) {
+            this.projectId = options.projectId;
+        } else if (this.apiKey && this.apiKey.startsWith('ak_')) {
+            try {
+                // If it's a JWT-style token, we could decode it here. 
+                // For now, if we don't have projectId, rely on the backend to figure it out
+                // or ensure it's passed during initialization.
+            } catch (e) { }
+        }
+
         this._maxReconnectAttempts = options.maxReconnectAttempts ?? Infinity;
     }
 
