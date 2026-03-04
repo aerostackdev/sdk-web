@@ -1,7 +1,7 @@
 /**
  * Aerostack Realtime Client for Web/Browser SDK
  */
-export type RealtimeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
+export type RealtimeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*' | string;
 
 export interface RealtimeMessage {
     type: string;
@@ -16,22 +16,35 @@ export interface RealtimeSubscriptionOptions {
 
 export type RealtimeCallback<T = any> = (payload: RealtimePayload<T>) => void;
 
+/** Typed payload for realtime events */
 export interface RealtimePayload<T = any> {
-    type: 'db_change' | 'chat_message';
+    type: 'db_change' | 'chat_message' | 'event';
     topic: string;
-    operation: RealtimeEvent;
+    operation?: RealtimeEvent;
+    event?: string;
     data: T;
     old?: T;
-    timestamp?: string;
+    userId?: string;
+    timestamp?: number | string;
     [key: string]: any;
+}
+
+/** Chat history message returned from REST API */
+export interface HistoryMessage {
+    id: string;
+    room_id: string;
+    user_id: string;
+    event: string;
+    data: any;
+    created_at: number;
 }
 
 export class RealtimeSubscription<T = any> {
     private client: RealtimeClient;
-    private topic: string;
+    topic: string;
     private options: RealtimeSubscriptionOptions;
-    private callbacks: Map<RealtimeEvent, Set<RealtimeCallback<T>>> = new Map();
-    private _isSubscribed: boolean = false;
+    private callbacks: Map<string, Set<RealtimeCallback<T>>> = new Map();
+    private isSubscribed: boolean = false;
 
     constructor(client: RealtimeClient, topic: string, options: RealtimeSubscriptionOptions = {}) {
         this.client = client;
@@ -39,7 +52,8 @@ export class RealtimeSubscription<T = any> {
         this.options = options;
     }
 
-    on(event: RealtimeEvent, callback: RealtimeCallback<T>): this {
+    /** Listen for DB change events (INSERT/UPDATE/DELETE/*) or custom named events */
+    on(event: RealtimeEvent | string, callback: RealtimeCallback<T>): this {
         if (!this.callbacks.has(event)) {
             this.callbacks.set(event, new Set());
         }
@@ -47,38 +61,83 @@ export class RealtimeSubscription<T = any> {
         return this;
     }
 
+    /** Remove a specific callback for an event */
+    off(event: RealtimeEvent | string, callback: RealtimeCallback<T>): this {
+        this.callbacks.get(event)?.delete(callback);
+        return this;
+    }
+
     subscribe(): this {
-        if (this._isSubscribed) return this;
+        if (this.isSubscribed) return this;
         this.client._send({
             type: 'subscribe',
             topic: this.topic,
             filter: this.options.filter
         });
-        this._isSubscribed = true;
+        this.isSubscribed = true;
         return this;
     }
 
     unsubscribe(): void {
-        if (!this._isSubscribed) return;
+        if (!this.isSubscribed) return;
         this.client._send({
             type: 'unsubscribe',
             topic: this.topic
         });
-        this._isSubscribed = false;
+        this.isSubscribed = false;
         this.callbacks.clear();
     }
 
-    get isSubscribed() { return this._isSubscribed; }
+    // ─── Phase 1: Pub/Sub — Publish custom events ─────────────────────────
+    /** Publish a custom event to all subscribers on this channel */
+    publish(event: string, data: any, options?: { persist?: boolean }): void {
+        this.client._send({
+            type: 'publish',
+            topic: this.topic,
+            event,
+            data,
+            persist: options?.persist,
+            id: this.client._generateId(),
+        });
+    }
+
+    // ─── Phase 2: Chat History ────────────────────────────────────────────
+    /** Fetch persisted message history for this channel (requires persist: true on publish) */
+    async getHistory(limit: number = 50, before?: number): Promise<HistoryMessage[]> {
+        return this.client._fetchHistory(this.topic, limit, before);
+    }
+
+    // ─── Phase 3: Presence ────────────────────────────────────────────────
+    /** Track this user's presence state on this channel (auto-synced to subscribers) */
+    track(state: Record<string, any>): void {
+        this.client._send({
+            type: 'track',
+            topic: this.topic,
+            state,
+        });
+    }
+
+    /** Stop tracking presence on this channel */
+    untrack(): void {
+        this.client._send({
+            type: 'untrack',
+            topic: this.topic,
+        });
+    }
 
     /** @internal */
     _emit(payload: RealtimePayload<T>): void {
-        const event = payload.operation as RealtimeEvent;
-        this.callbacks.get(event)?.forEach(cb => {
-            try { cb(payload); } catch (e) { console.error('Realtime callback error:', e); }
-        });
-        this.callbacks.get('*')?.forEach(cb => {
-            try { cb(payload); } catch (e) { console.error('Realtime callback error:', e); }
-        });
+        // DB change events (INSERT/UPDATE/DELETE)
+        if (payload.operation) {
+            const event = payload.operation as string;
+            this.callbacks.get(event)?.forEach(cb => cb(payload));
+        }
+        // Custom named events ('player-moved', 'presence:join', etc.)
+        if (payload.event) {
+            this.callbacks.get(payload.event)?.forEach(cb => cb(payload));
+        }
+        // Catch-all
+        this.callbacks.get('*')?.forEach(cb => cb(payload));
     }
 }
 
@@ -86,17 +145,20 @@ export type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting
 
 export interface RealtimeClientOptions {
     baseUrl: string;
-    apiKey?: string;
+    projectId: string;
     token?: string;
-    projectId?: string;
+    userId?: string;
+    apiKey?: string;
+    /** Max reconnect attempts before giving up (default: Infinity) */
     maxReconnectAttempts?: number;
 }
 
 export class RealtimeClient {
     private baseUrl: string;
-    private apiKey?: string;
+    private projectId: string;
     private token?: string;
-    private projectId?: string;
+    private userId?: string;
+    private apiKey?: string;
     private ws: WebSocket | null = null;
     private subscriptions: Map<string, RealtimeSubscription> = new Map();
     private reconnectTimer: any = null;
@@ -106,37 +168,35 @@ export class RealtimeClient {
     private _connectingPromise: Promise<void> | null = null;
     private _status: RealtimeStatus = 'idle';
     private _statusListeners: Set<(s: RealtimeStatus) => void> = new Set();
+    // HTTP base URL for REST endpoints (history, etc.)
+    private _httpBaseUrl: string;
+    // Pong tracking
     private _lastPong: number = 0;
+    // Max reconnect attempts
     private _maxReconnectAttempts: number;
     private _maxRetriesListeners: Set<() => void> = new Set();
 
     constructor(options: RealtimeClientOptions) {
         const wsBase = options.baseUrl.replace(/\/v1\/?$/, '').replace(/^http/, 'ws');
         this.baseUrl = `${wsBase}/api/realtime`;
+        this._httpBaseUrl = options.baseUrl.replace(/\/v1\/?$/, '');
+        this.projectId = options.projectId;
         this.token = options.token;
+        this.userId = options.userId;
         this.apiKey = options.apiKey;
-        // Attempt to extract projectId from API key if not explicitly passed
-        if (options.projectId) {
-            this.projectId = options.projectId;
-        } else if (this.apiKey && this.apiKey.startsWith('ak_')) {
-            try {
-                // If it's a JWT-style token, we could decode it here. 
-                // For now, if we don't have projectId, rely on the backend to figure it out
-                // or ensure it's passed during initialization.
-            } catch (e) { }
-        }
-
         this._maxReconnectAttempts = options.maxReconnectAttempts ?? Infinity;
     }
 
     get status(): RealtimeStatus { return this._status; }
     get connected(): boolean { return this._status === 'connected'; }
 
+    /** Subscribe to connection status changes. Returns unsubscribe fn. */
     onStatusChange(cb: (status: RealtimeStatus) => void): () => void {
         this._statusListeners.add(cb);
         return () => this._statusListeners.delete(cb);
     }
 
+    /** Called when max reconnect attempts exceeded. Returns unsubscribe fn. */
     onMaxRetriesExceeded(cb: () => void): () => void {
         this._maxRetriesListeners.add(cb);
         return () => this._maxRetriesListeners.delete(cb);
@@ -147,6 +207,7 @@ export class RealtimeClient {
         this._statusListeners.forEach(cb => cb(s));
     }
 
+    /** Update the auth token on a live connection */
     setToken(newToken: string): void {
         this.token = newToken;
         this._send({ type: 'auth', token: newToken });
@@ -165,8 +226,9 @@ export class RealtimeClient {
         this._setStatus('connecting');
         return new Promise((resolve, reject) => {
             const url = new URL(this.baseUrl);
+            url.searchParams.set('projectId', this.projectId);
+            if (this.userId) url.searchParams.set('userId', this.userId);
             if (this.token) url.searchParams.set('token', this.token);
-            if (this.projectId) url.searchParams.set('projectId', this.projectId);
 
             // SECURITY: Pass API key via Sec-WebSocket-Protocol header only — never as URL query param
             // (URL params appear in CDN logs, browser history, and Referer headers).
@@ -185,11 +247,12 @@ export class RealtimeClient {
                 this._lastPong = Date.now();
                 this.startHeartbeat();
                 this._setupOfflineDetection();
+                // Flush queued messages
                 while (this._sendQueue.length > 0) {
                     this.ws!.send(JSON.stringify(this._sendQueue.shift()));
                 }
                 for (const sub of this.subscriptions.values()) {
-                    if (sub.isSubscribed) sub.subscribe();
+                    sub.subscribe();
                 }
                 resolve();
             };
@@ -247,8 +310,19 @@ export class RealtimeClient {
         return sub as RealtimeSubscription<T>;
     }
 
-    sendChat(roomId: string, text: string): void {
-        this._send({ type: 'chat', roomId, text });
+    /** Legacy: send a chat message (now persisted to DB) */
+    sendChat(roomId: string, text: string, metadata?: Record<string, any>): void {
+        this._send({ type: 'chat', roomId, text, metadata });
+    }
+
+    /** Legacy: get a chat room subscription */
+    chatRoom(roomId: string): RealtimeSubscription {
+        return this.channel(`chat/${roomId}/${this.projectId}`);
+    }
+
+    /** @internal — Generate unique message ID for ack tracking */
+    _generateId(): string {
+        return Math.random().toString(36).slice(2) + Date.now().toString(36);
     }
 
     /** @internal */
@@ -260,13 +334,53 @@ export class RealtimeClient {
         }
     }
 
+    /** @internal — Fetch chat/event history via REST API */
+    async _fetchHistory(room: string, limit: number = 50, before?: number): Promise<HistoryMessage[]> {
+        const url = new URL(`${this._httpBaseUrl}/api/v1/public/realtime/history`);
+        url.searchParams.set('room', room);
+        url.searchParams.set('limit', String(limit));
+        if (before) url.searchParams.set('before', String(before));
+
+        const headers: Record<string, string> = {};
+        if (this.apiKey) headers['X-Aerostack-Key'] = this.apiKey;
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+
+        const res = await fetch(url.toString(), { headers });
+        const json = await res.json() as any;
+        return json.messages || [];
+    }
+
     private handleMessage(data: RealtimeMessage) {
+        // Track pong for liveness
         if (data.type === 'pong') {
             this._lastPong = Date.now();
             return;
         }
-        const sub = this.subscriptions.get(data.topic);
-        if (sub) sub._emit(data as any);
+
+        // Ack (fire-and-forget acknowledgment from server)
+        if (data.type === 'ack') {
+            return;
+        }
+
+        // Route to subscription: db_change, chat_message, event, presence:*
+        if (data.type === 'db_change' || data.type === 'chat_message' || data.type === 'event') {
+            const sub = this.subscriptions.get(data.topic);
+            if (sub) {
+                sub._emit(data as any);
+            }
+        }
+
+        // Re-key subscription on server-confirmed topic (for non-TS SDKs compatibility)
+        if (data.type === 'subscribed' && data.topic) {
+            for (const [origTopic, sub] of this.subscriptions.entries()) {
+                if (data.topic !== origTopic && data.topic.startsWith(origTopic)) {
+                    this.subscriptions.delete(origTopic);
+                    sub.topic = data.topic;
+                    this.subscriptions.set(data.topic, sub);
+                    break;
+                }
+            }
+        }
     }
 
     private startHeartbeat() {
@@ -308,6 +422,7 @@ export class RealtimeClient {
         }
     }
 
+    // Offline/online detection (browser only)
     private _handleOnline = () => {
         if (this._status !== 'connected') {
             this.reconnectAttempts = 0;
