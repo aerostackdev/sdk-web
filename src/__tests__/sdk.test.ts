@@ -33,7 +33,7 @@ vi.mock('../realtime.js', () => {
   };
 });
 
-import { SDK, Aerostack, createClient } from '../sdk';
+import { SDK, Aerostack, createClient } from '../sdk.js';
 
 describe('Web SDK', () => {
   describe('constructor', () => {
