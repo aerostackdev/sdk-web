@@ -45,6 +45,11 @@ export class RealtimeSubscription<T = any> {
     private options: RealtimeSubscriptionOptions;
     private callbacks: Map<string, Set<RealtimeCallback<T>>> = new Map();
     private isSubscribed: boolean = false;
+    /** Tracks the serverTimestamp of the last received event for catch-up on reconnect */
+    _lastEventTimestamp: number = 0;
+    // Phase 2: Typing indicator state
+    private _typingTimer: ReturnType<typeof setTimeout> | null = null;
+    private _typingActive = false;
 
     constructor(client: RealtimeClient, topic: string, options: RealtimeSubscriptionOptions = {}) {
         this.client = client;
@@ -72,7 +77,8 @@ export class RealtimeSubscription<T = any> {
         this.client._send({
             type: 'subscribe',
             topic: this.topic,
-            filter: this.options.filter
+            filter: this.options.filter,
+            since: this._lastEventTimestamp || undefined,
         });
         this.isSubscribed = true;
         return this;
@@ -80,6 +86,7 @@ export class RealtimeSubscription<T = any> {
 
     unsubscribe(): void {
         if (!this.isSubscribed) return;
+        this.stopTyping(); // Phase 2: clean up typing indicator before unsubscribing
         this.client._send({
             type: 'unsubscribe',
             topic: this.topic
@@ -103,7 +110,11 @@ export class RealtimeSubscription<T = any> {
     }
 
     // ─── Phase 2: Chat History ────────────────────────────────────────────
-    /** Fetch persisted message history for this channel (requires persist: true on publish) */
+    /**
+     * Fetch persisted message history for this channel.
+     * @param limit Max messages to return (default 50)
+     * @param before Timestamp cursor — fetch messages before this timestamp
+     */
     async getHistory(limit: number = 50, before?: number): Promise<HistoryMessage[]> {
         return this.client._fetchHistory(this.topic, limit, before);
     }
@@ -126,8 +137,96 @@ export class RealtimeSubscription<T = any> {
         });
     }
 
+    // ─── Phase 2: Typing Indicators ───────────────────────────────────────────
+
+    /** Start typing indicator (auto-stops after 3s) */
+    startTyping(): void {
+        if (!this._typingActive) {
+            this._typingActive = true;
+            this.client._send({ type: 'typing', topic: this.topic, isTyping: true });
+        }
+        // Reset/extend the auto-stop timer
+        if (this._typingTimer) clearTimeout(this._typingTimer);
+        this._typingTimer = setTimeout(() => {
+            this.stopTyping();
+        }, 3000);
+    }
+
+    /** Stop typing indicator immediately */
+    stopTyping(): void {
+        if (this._typingTimer) {
+            clearTimeout(this._typingTimer);
+            this._typingTimer = null;
+        }
+        if (this._typingActive) {
+            this._typingActive = false;
+            this.client._send({ type: 'typing', topic: this.topic, isTyping: false });
+        }
+    }
+
+    /** Listen for typing state changes. Returns unsubscribe fn. */
+    onTyping(cb: (users: string[]) => void): () => void {
+        const handler = (payload: any) => cb((payload.data?.users as string[]) || []);
+        this.on('typing:list', handler);
+        return () => this.off('typing:list', handler);
+    }
+
+    // ─── Phase 2: Reactions ───────────────────────────────────────────────────
+
+    /** Toggle an emoji reaction on a message */
+    react(messageId: string, emoji: string): void {
+        this.client._send({ type: 'react', topic: this.topic, messageId, emoji });
+    }
+
+    /** Listen for reaction changes on this channel. Returns unsubscribe fn. */
+    onReaction(cb: (e: {
+        messageId: string;
+        emoji: string;
+        userId: string;
+        reactions: Record<string, { count: number; users: string[]; reacted: boolean }>;
+    }) => void): () => void {
+        const handler = (payload: any) => cb(payload.data);
+        this.on('reaction:update', handler);
+        return () => this.off('reaction:update', handler);
+    }
+
+    // ─── Phase 2: Delivery Receipts ───────────────────────────────────────────
+
+    /** Acknowledge receipt of a message (triggers delivery:ack event for sender) */
+    ack(messageId: string): void {
+        this.client._send({ type: 'ack', topic: this.topic, messageId });
+    }
+
+    /** Listen for delivery acknowledgements on this channel. Returns unsubscribe fn. */
+    onDelivered(cb: (e: { messageId: string; userId: string; ackedAt: number }) => void): () => void {
+        const handler = (payload: any) => cb(payload.data);
+        this.on('delivery:ack', handler);
+        return () => this.off('delivery:ack', handler);
+    }
+
+    // ─── Phase 2: Threads ─────────────────────────────────────────────────────
+
+    /**
+     * Get or create a thread channel for a specific message.
+     * Thread topic: {originalChannel}/thread/{messageId}/{projectId}
+     * When someone publishes to a thread, parent channel receives a thread:reply event.
+     */
+    thread(messageId: string): RealtimeSubscription {
+        // Strip the /{projectId} suffix (client.channel() will re-add it)
+        const projectId = (this.client as any)['projectId'] as string;
+        const baseTopic = this.topic.endsWith(`/${projectId}`)
+            ? this.topic.slice(0, -(projectId.length + 1))
+            : this.topic;
+        const threadTopic = `${baseTopic}/thread/${messageId}`;
+        return this.client.channel(threadTopic);
+    }
+
     /** @internal */
     _emit(payload: RealtimePayload<T>): void {
+        // Track serverTimestamp for catch-up on reconnect
+        if (payload['serverTimestamp']) {
+            this._lastEventTimestamp = Math.max(this._lastEventTimestamp, payload['serverTimestamp'] as number);
+        }
         // DB change events (INSERT/UPDATE/DELETE)
         if (payload.operation) {
             const event = payload.operation as string;
@@ -139,6 +238,17 @@ export class RealtimeSubscription<T = any> {
         }
         // Catch-all
         this.callbacks.get('*')?.forEach(cb => cb(payload));
+    }
+
+    // ─── Phase 1: Message edit + delete broadcast ─────────────────────────
+    /** Broadcast a message edit to all subscribers on this channel */
+    editMessage(messageId: string, newText: string): void {
+        this.publish('message:edited', { id: messageId, text: newText, editedAt: Date.now() });
+    }
+
+    /** Broadcast a message deletion to all subscribers on this channel */
+    deleteMessage(messageId: string): void {
+        this.publish('message:deleted', { id: messageId, deletedAt: Date.now() });
     }
 }
 
@@ -440,10 +550,23 @@ export class RealtimeClient {
         this._setStatus('disconnected');
     };
 
+    private _handleBeforeUnload: (() => void) | null = null;
+
     private _setupOfflineDetection() {
         if (typeof window !== 'undefined') {
             window.addEventListener('online', this._handleOnline);
             window.addEventListener('offline', this._handleOffline);
+
+            // Best-effort: mark presence as gone before tab closes
+            this._handleBeforeUnload = () => {
+                if (this.apiKey && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+                    navigator.sendBeacon(
+                        `${this._httpBaseUrl}/api/realtime/leave`,
+                        new Blob([`apiKey=${encodeURIComponent(this.apiKey)}`], { type: 'text/plain' })
+                    );
+                }
+            };
+            window.addEventListener('beforeunload', this._handleBeforeUnload);
         }
     }
 
@@ -451,6 +574,10 @@ export class RealtimeClient {
         if (typeof window !== 'undefined') {
             window.removeEventListener('online', this._handleOnline);
             window.removeEventListener('offline', this._handleOffline);
+            if (this._handleBeforeUnload) {
+                window.removeEventListener('beforeunload', this._handleBeforeUnload);
+                this._handleBeforeUnload = null;
+            }
         }
     }
 }
