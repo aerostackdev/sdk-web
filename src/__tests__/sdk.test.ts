@@ -113,7 +113,7 @@ describe('Web SDK', () => {
       });
 
       expect(result.text).toBe('Hi');
-      expect(mockFetch.mock.calls[0][0]).toBe('https://api.test.com/api/gateway/bot/v1/chat/completions');
+      expect(mockFetch.mock.calls[0]![0]).toBe('https://api.test.com/api/gateway/bot/v1/chat/completions');
     });
 
     it('should throw on non-OK response', async () => {

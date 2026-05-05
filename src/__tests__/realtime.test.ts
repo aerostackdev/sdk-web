@@ -343,7 +343,7 @@ describe('RealtimeClient', () => {
       const result = await client._fetchHistory('chat/room', 10);
       expect(result).toEqual([{ id: '1' }]);
 
-      const headers = mockFetch.mock.calls[0][1].headers;
+      const headers = mockFetch.mock.calls[0]![1].headers;
       expect(headers['X-Aerostack-Key']).toBe('my-key');
       expect(headers['Authorization']).toBe('Bearer my-jwt');
     });
